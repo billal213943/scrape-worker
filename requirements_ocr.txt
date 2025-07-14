@@ -1,0 +1,20 @@
+# Dépendances pour l'extraction OCR des données d'armes FlashBack FA
+
+# OCR et traitement d'images
+pytesseract>=0.3.10
+opencv-python>=4.8.0
+Pillow>=10.0.0
+
+# Analyse de données
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Traitement de texte et patterns
+regex>=2023.0.0
+
+# Optionnel: amélioration OCR
+# easyocr>=1.7.0        # Alternative à Tesseract
+# paddleocr>=2.7.0      # OCR plus avancé
+
+# Logging et utilitaires
+tqdm>=4.65.0 
