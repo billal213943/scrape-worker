@@ -278,109 +278,126 @@ class UniversalTableExtractorAI:
         return normalized_data
 
     def process_all_images(self) -> Dict[str, pd.DataFrame]:
-        """Traite toutes les images et retourne des DataFrames propres par type de tableau"""
-        logger.info(f"🤖 Analyse IA - Datasets propres par type de tableau dans {self.images_dir}")
+        """Traite toutes les images et retourne UN DataFrame par image avec organisation parfaite"""
+        logger.info(f"🤖 Analyse IA - UN dataset par image dans {self.images_dir}")
         
-        dataframes_by_type = {}
+        dataframes_by_image = {}
         processed_count = 0
         
-        # Traiter chaque image
+        # Traiter chaque image individuellement
         image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif', '*.bmp', '*.webp']
+        image_files = []
+        
+        # Collecter toutes les images et les trier
         for ext in image_extensions:
-            for image_path in self.images_dir.glob(ext):
-                logger.info(f"📷 Analyse IA de {image_path.name}")
+            image_files.extend(self.images_dir.glob(ext))
+        
+        # Trier les images par nom pour un ordre cohérent
+        image_files.sort(key=lambda x: x.name)
+        
+        for image_index, image_path in enumerate(image_files, 1):
+            logger.info(f"📷 Analyse IA de {image_path.name} ({image_index}/{len(image_files)})")
+            
+            # Analyser avec GPT-4 Vision
+            table_type, tables = self.analyze_all_tables_with_vision(image_path)
+            
+            if tables:
+                # Collecter toutes les données de cette image
+                all_image_data = []
                 
-                # Analyser avec GPT-4 Vision
-                table_type, tables = self.analyze_all_tables_with_vision(image_path)
-                
-                if tables:
-                    for table_index, table in enumerate(tables):
-                        if isinstance(table, dict):
-                            table_data = table.get('data', [])
-                            detected_type = table.get('table_type', table_type).lower()
-                        else:
-                            # Si c'est directement une liste
-                            table_data = table if isinstance(table, list) else []
-                            detected_type = table_type.lower()
+                for table_index, table in enumerate(tables):
+                    if isinstance(table, dict):
+                        table_data = table.get('data', [])
+                        detected_type = table.get('table_type', 'tableau').lower()
+                    else:
+                        # Si c'est directement une liste
+                        table_data = table if isinstance(table, list) else []
+                        detected_type = 'tableau'
+                    
+                    if table_data:
+                        # Normaliser les données de ce tableau
+                        normalized_data = self.normalize_table_data(table_data, detected_type)
                         
-                        if table_data:
-                            # Normaliser les données de ce tableau
-                            normalized_data = self.normalize_table_data(table_data, detected_type)
+                        if normalized_data:
+                            # Ajouter chaque élément avec métadonnées
+                            for item in normalized_data:
+                                # Nettoyer l'item - garder seulement les colonnes utiles
+                                clean_item = {}
+                                
+                                # Garder seulement les colonnes qui ont des valeurs
+                                for key, value in item.items():
+                                    if value and str(value).strip():
+                                        clean_item[key] = str(value).strip()
+                                
+                                # Ajouter les métadonnées si l'item a du contenu
+                                if clean_item:
+                                    clean_item['Table_Type'] = detected_type.capitalize()
+                                    clean_item['Source_Image'] = image_path.name
+                                    all_image_data.append(clean_item)
                             
-                            if normalized_data:
-                                # Créer un nom de dataset propre par type de tableau
-                                clean_type_name = re.sub(r'[^a-zA-Z0-9_]', '_', detected_type)
-                                clean_type_name = re.sub(r'_+', '_', clean_type_name)
-                                clean_type_name = clean_type_name.strip('_')
-                                
-                                # Si ce type n'existe pas encore, le créer
-                                if clean_type_name not in dataframes_by_type:
-                                    dataframes_by_type[clean_type_name] = []
-                                
-                                # Ajouter chaque élément avec métadonnées
-                                for item in normalized_data:
-                                    # Nettoyer l'item - garder seulement les colonnes utiles
-                                    clean_item = {}
-                                    
-                                    # Garder seulement les colonnes qui ont des valeurs
-                                    for key, value in item.items():
-                                        if value and str(value).strip():
-                                            clean_item[key] = str(value).strip()
-                                    
-                                    # Ajouter les métadonnées si l'item a du contenu
-                                    if clean_item:
-                                        clean_item['Source_Image'] = image_path.name
-                                        clean_item['Table_Type'] = detected_type.capitalize()
-                                        dataframes_by_type[clean_type_name].append(clean_item)
-                                
-                                logger.info(f"  ✅ Tableau '{detected_type}': {len(normalized_data)} éléments ajoutés")
+                            logger.info(f"  ✅ Tableau '{detected_type}': {len(normalized_data)} éléments")
                 
-                processed_count += 1
-        
-        # Convertir les listes en DataFrames et supprimer les doublons
-        final_dataframes = {}
-        
-        for table_type, items_list in dataframes_by_type.items():
-            if items_list:
-                # Supprimer les doublons par nom d'arme/objet
-                unique_items = []
-                seen_items = set()
+                # Créer un DataFrame pour cette image si on a des données
+                if all_image_data:
+                    # Nom propre et organisé pour ce dataset
+                    dataset_name = f"image_{image_index:02d}"
+                    
+                    # Supprimer les doublons dans cette image
+                    unique_items = []
+                    seen_items = set()
+                    
+                    for item in all_image_data:
+                        # Utiliser les premières valeurs significatives comme clé unique
+                        key_values = []
+                        for key, value in item.items():
+                            if key not in ['Table_Type', 'Source_Image'] and value and str(value).strip():
+                                key_values.append(str(value).lower().strip())
+                                if len(key_values) >= 2:  # Utiliser 2 valeurs pour la clé
+                                    break
+                        
+                        item_key = '|'.join(key_values) if key_values else str(len(unique_items))
+                        
+                        if item_key not in seen_items:
+                            unique_items.append(item)
+                            seen_items.add(item_key)
+                    
+                    if unique_items:
+                        # Créer le DataFrame pour cette image
+                        df = pd.DataFrame(unique_items)
+                        
+                        # Réorganiser les colonnes : données importantes d'abord, métadonnées à la fin
+                        priority_columns = []
+                        regular_columns = []
+                        meta_columns = []
+                        
+                        for col in df.columns:
+                            if col in ['Table_Type', 'Source_Image']:
+                                meta_columns.append(col)
+                            elif any(priority in col.upper() for priority in ['ARME', 'NOM', 'OBJET', 'VEHICULE']):
+                                priority_columns.append(col)
+                            else:
+                                regular_columns.append(col)
+                        
+                        # Nouvelle organisation des colonnes
+                        new_column_order = priority_columns + regular_columns + meta_columns
+                        df = df[new_column_order]
+                        
+                        dataframes_by_image[dataset_name] = df
+                        logger.info(f"🎯 Dataset créé '{dataset_name}': {len(df)} éléments uniques")
                 
-                for item in items_list:
-                    # Utiliser le nom ou les premières valeurs comme clé unique
-                    name_columns = ['Nom', 'ARMES DE POINGS', 'FUSIL A POMPE', 'ARMES AUTOMATIQUE', 'ARMES LOURDES']
-                    item_key = None
-                    
-                    for col in name_columns:
-                        if col in item and item[col] and str(item[col]).strip():
-                            item_key = str(item[col]).lower().strip()
-                            break
-                    
-                    # Si pas de nom trouvé, utiliser les 2 premières valeurs
-                    if not item_key:
-                        first_values = [v for v in list(item.values())[:2] if v and str(v).strip()]
-                        item_key = '|'.join(str(v).lower().strip() for v in first_values)
-                    
-                    if item_key and item_key not in seen_items and len(item_key) > 2:
-                        unique_items.append(item)
-                        seen_items.add(item_key)
-                
-                if unique_items:
-                    df = pd.DataFrame(unique_items)
-                    final_dataframes[table_type] = df
-                    logger.info(f"🎯 Dataset créé '{table_type}': {len(df)} éléments uniques")
+            processed_count += 1
         
-        if not final_dataframes:
+        if not dataframes_by_image:
             logger.warning("❌ Aucun dataset créé - aucun tableau détecté")
         else:
-            logger.info(f"🎉 {len(final_dataframes)} datasets créés par type de tableau:")
-            for name, df in final_dataframes.items():
+            logger.info(f"🎉 {len(dataframes_by_image)} datasets créés (1 par image):")
+            for name, df in dataframes_by_image.items():
                 logger.info(f"   📊 {name}: {len(df)} éléments")
         
-        return final_dataframes
+        return dataframes_by_image
 
     def export_all_dataframes(self, dataframes: Dict[str, pd.DataFrame]):
-        """Exporte tous les DataFrames en code Python uniquement dans un dossier séparé"""
+        """Exporte tous les DataFrames en code Python avec nommage parfait - 1 dataset par image"""
         try:
             # Créer le dossier de sortie
             output_dir = Path("flashback_dataframes")
@@ -388,24 +405,24 @@ class UniversalTableExtractorAI:
             
             timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
             
-            for table_type, df in dataframes.items():
+            for dataset_name, df in dataframes.items():
                 if not df.empty:
-                    # Nettoyer le nom pour les fichiers et variables (remplacer espaces par underscores)
-                    clean_table_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_type.lower())
-                    clean_table_name = re.sub(r'_+', '_', clean_table_name)  # Éviter les underscores multiples
-                    clean_table_name = clean_table_name.strip('_')  # Enlever les underscores en début/fin
+                    # Nom de fichier propre et organisé
+                    clean_dataset_name = f"dataset_{dataset_name}"
                     
-                    # Export Python code uniquement dans le dossier séparé
-                    py_file = output_dir / f"flashback_{clean_table_name}_data.py"
+                    # Export Python code avec nommage parfait
+                    py_file = output_dir / f"flashback_{clean_dataset_name}_data.py"
                     with open(py_file, 'w', encoding='utf-8') as f:
                         f.write("import pandas as pd\n\n")
-                        f.write(f"# Données {table_type} extraites par IA GPT-4 Vision depuis les images FlashBack FA\n")
+                        f.write(f"# Dataset FlashBack FA - {dataset_name}\n")
+                        f.write(f"# Extrait par IA GPT-4 Vision depuis l'image correspondante\n")
                         f.write(f"# DÉTECTION AUTOMATIQUE PAR INTELLIGENCE ARTIFICIELLE\n")
-                        f.write(f"# Timestamp: {timestamp}\n\n")
+                        f.write(f"# Timestamp: {timestamp}\n")
+                        f.write(f"# Total éléments: {len(df)}\n\n")
                         
-                        # Variables avec noms propres (pas d'espaces)
-                        var_name = f"{clean_table_name}_data"
-                        df_name = f"{clean_table_name}_df"
+                        # Variables avec noms propres et cohérents
+                        var_name = f"{clean_dataset_name}_data"
+                        df_name = f"{clean_dataset_name}_df"
                         
                         f.write(f"{var_name} = {df_name} = pd.DataFrame([\n")
                         
@@ -422,16 +439,28 @@ class UniversalTableExtractorAI:
                         
                         f.write("])\n\n")
                         
-                        # Ajouter un commentaire d'utilisation
+                        # Ajouter des exemples d'utilisation
                         f.write(f"# Utilisation:\n")
-                        f.write(f"# from flashback_dataframes.flashback_{clean_table_name}_data import {var_name}, {df_name}\n")
+                        f.write(f"# from flashback_dataframes.flashback_{clean_dataset_name}_data import {var_name}, {df_name}\n")
                         f.write(f"# print({df_name}.head())\n")
-                        f.write(f"# print(f'{{len({df_name})}} éléments dans ce dataset')\n")
+                        f.write(f"# print(f'{{len({df_name})}} éléments dans ce dataset')\n\n")
+                        
+                        # Statistiques du dataset
+                        f.write(f"# Statistiques du dataset:\n")
+                        f.write(f"# - Nombre d'éléments: {len(df)}\n")
+                        f.write(f"# - Colonnes: {list(df.columns)}\n")
+                        
+                        # Types de tableaux détectés
+                        if 'Table_Type' in df.columns:
+                            table_types = df['Table_Type'].value_counts().to_dict()
+                            f.write(f"# - Types détectés: {dict(table_types)}\n")
                     
-                    logger.info(f"✅ '{table_type}' exporté vers {py_file}")
+                    logger.info(f"✅ '{dataset_name}' exporté vers {py_file}")
                     logger.info(f"   📝 Variables: {var_name}, {df_name}")
+                    logger.info(f"   📊 {len(df)} éléments dans ce dataset")
             
-            logger.info(f"📁 Tous les DataFrames exportés dans le dossier: {output_dir.absolute()}")
+            logger.info(f"📁 Tous les datasets exportés dans: {output_dir.absolute()}")
+            logger.info(f"🎯 Organisation: 1 fichier Python = 1 image analysée")
             
         except Exception as e:
             logger.error(f"Erreur lors de l'export: {e}")
@@ -502,31 +531,34 @@ def main():
     print("\n🤖 Analyse par intelligence artificielle...")
     print("🔍 GPT-4 Vision va analyser chaque image et extraire TOUS les tableaux")
     print("📊 Détection automatique: armes, véhicules, objets, immobilier, emplois, etc.")
-    dataframes_by_type = ai_extractor.process_all_images()
+    dataframes_by_image = ai_extractor.process_all_images()
     
-    if dataframes_by_type:
-        total_elements = sum(len(df) for df in dataframes_by_type.values())
-        print(f"\n📊 {total_elements} éléments détectés par l'IA dans {len(dataframes_by_type)} types de tableaux!")
+    if dataframes_by_image:
+        total_elements = sum(len(df) for df in dataframes_by_image.values())
+        print(f"\n📊 {total_elements} éléments détectés par l'IA dans {len(dataframes_by_image)} images!")
         
         print("\n🔤 Aperçu des données extraites par IA:")
-        for name, df in dataframes_by_type.items():
+        for name, df in dataframes_by_image.items():
             print(f"\n--- {name} ({len(df)} éléments) ---")
             print(df.head(3))  # Afficher 3 premières lignes
         
         # Exporter au format demandé
-        ai_extractor.export_all_dataframes(dataframes_by_type)
+        ai_extractor.export_all_dataframes(dataframes_by_image)
         print("\n✅ Données IA exportées vers le dossier flashback_dataframes/")
         
         # Statistiques détaillées
         print(f"\n📈 Statistiques complètes:")
-        for name, df in dataframes_by_type.items():
+        for name, df in dataframes_by_image.items():
             print(f"   📋 {name}: {len(df)} éléments")
             # Afficher les colonnes principales
             main_columns = [col for col in df.columns if not col.startswith('Source_') and col != 'Table_Type']
             print(f"      Colonnes: {', '.join(main_columns[:5])}" + ("..." if len(main_columns) > 5 else ""))
         
         print(f"\n🎯 TOTAL: {total_elements} éléments extraits automatiquement par l'IA!")
-        print("🎮 Chaque type d'arme/objet dans son dataset séparé (plus propre!)")
+        print("🎮 Organisation parfaite: 1 dataset par image analysée!")
+        print("📁 Fichiers générés dans flashback_dataframes/ :")
+        for name, df in dataframes_by_image.items():
+            print(f"   📄 flashback_dataset_{name}_data.py ({len(df)} éléments)")
         
     else:
         print("❌ Aucun tableau détecté par l'IA.")
